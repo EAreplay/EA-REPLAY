@@ -1,0 +1,348 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CRYPT REPLAY</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#090d14;color:#e7edf7;font-family:Arial,sans-serif}
+header{height:65px;border-bottom:1px solid #202938;display:flex;
+align-items:center;justify-content:space-between;padding:0 25px}
+.logo{font-size:21px;font-weight:bold;letter-spacing:2px}
+.logo span{color:#36d399}
+main{padding:20px;max-width:1500px;margin:auto}
+.panel{background:#111824;border:1px solid #202b3b;border-radius:10px;padding:15px}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:15px}
+select,input,button{background:#182333;color:white;border:1px solid #344256;
+padding:10px;border-radius:6px}
+button{cursor:pointer}
+button:hover{background:#26384f}
+.primary{background:#2563eb;border-color:#2563eb}
+.green{background:#087e58;border-color:#087e58}
+.red{background:#a83242;border-color:#a83242}
+#chart{width:100%;height:440px;display:block}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:15px}
+.stat small{color:#8c9bb0}
+.stat h2{margin:8px 0 0;font-size:21px}
+.bottom{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-top:15px}
+.muted{color:#8796aa;font-size:13px}
+#message{margin:10px 0;color:#fbbf24;font-size:13px}
+#history{max-height:200px;overflow:auto}
+.trade{padding:10px;border-bottom:1px solid #263244;font-size:13px}
+@media(max-width:700px){
+.stats{grid-template-columns:repeat(2,1fr)}
+.bottom{grid-template-columns:1fr}
+#chart{height:320px}
+}
+</style>
+</head>
+<body>
+<header>
+ <div class="logo">CRYPT <span>REPLAY</span></div>
+ <div class="muted">HISTORICAL BACKTESTING SIMULATOR</div>
+</header>
+
+<main>
+ <div class="stats">
+  <div class="panel stat"><small>VIRTUAL BALANCE</small><h2 id="balance">$10,000.00</h2></div>
+  <div class="panel stat"><small>OPEN PNL</small><h2 id="pnl">$0.00</h2></div>
+  <div class="panel stat"><small>TRADES</small><h2 id="count">0</h2></div>
+  <div class="panel stat"><small>MARKET PRICE</small><h2 id="price">---</h2></div>
+ </div>
+
+ <div class="panel">
+  <div class="toolbar">
+   <select id="symbol">
+    <option>BTCUSDT</option><option>ETHUSDT</option>
+    <option>SOLUSDT</option><option>BNBUSDT</option>
+    <option>LINKUSDT</option>
+   </select>
+   <select id="interval">
+    <option value="1m">1m</option><option value="5m">5m</option>
+    <option value="15m" selected>15m</option><option value="30m">30m</option>
+    <option value="1h">1h</option><option value="4h">4h</option>
+    <option value="1d">1d</option>
+   </select>
+   <button class="primary" id="load">LOAD DATA</button>
+   <button id="demo">DEMO DATA</button>
+   <span class="muted" id="source">No data loaded</span>
+  </div>
+
+  <canvas id="chart"></canvas>
+
+  <div id="message">Load historical candles or select Demo Data to test the interface.</div>
+
+  <div class="toolbar">
+   <button id="previous">◀ PREVIOUS</button>
+   <button class="primary" id="next">NEXT CANDLE ▶</button>
+   <button id="play">PLAY</button>
+   <select id="speed">
+    <option value="1000">1x</option>
+    <option value="500">2x</option>
+    <option value="200">5x</option>
+    <option value="100">10x</option>
+   </select>
+   <button id="reset">RESET REPLAY</button>
+  </div>
+ </div>
+
+ <div class="bottom">
+  <div class="panel">
+   <h3>VIRTUAL TRADING</h3>
+   <div class="toolbar">
+    <input id="quantity" type="number" value="100" min="1" placeholder="Position size ($)">
+    <input id="stop" type="number" placeholder="Stop Loss">
+    <input id="target" type="number" placeholder="Take Profit">
+   </div>
+   <div class="toolbar">
+    <button class="green" id="long">BUY / LONG</button>
+    <button class="red" id="short">SELL / SHORT</button>
+    <button id="close">CLOSE TRADE</button>
+   </div>
+   <p class="muted">Simulation only. No real orders are sent.</p>
+   <div id="position">No open position</div>
+  </div>
+
+  <div class="panel">
+   <h3>TRADE JOURNAL</h3>
+   <div id="history" class="muted">No trades yet.</div>
+  </div>
+ </div>
+
+ <div class="panel" style="margin-top:15px">
+  <h3>RANDOM PATTERN GENERATOR</h3>
+  <p id="pattern">Complete a virtual trade to generate a pattern.</p>
+  <p class="muted">Patterns are randomly selected for practice. They are not automatically detected on the chart.</p>
+ </div>
+</main>
+
+<script>
+const canvas=document.getElementById("chart");
+const ctx=canvas.getContext("2d");
+
+let candles=[];
+let visible=0;
+let playing=false;
+let timer=null;
+let balance=10000;
+let trades=0;
+let position=null;
+let history=[];
+let lastPattern="";
+let currentPrice=0;
+
+const patterns=[
+ "Fair Value Gap (FVG)",
+ "Order Block",
+ "Break of Structure (BOS)",
+ "Change of Character (CHoCH)",
+ "Liquidity Sweep",
+ "Breaker Block",
+ "Mitigation Block"
+];
+
+function message(text){document.getElementById("message").textContent=text}
+
+function resize(){
+ const rect=canvas.getBoundingClientRect();
+ const dpr=window.devicePixelRatio||1;
+ canvas.width=rect.width*dpr;
+ canvas.height=rect.height*dpr;
+ ctx.setTransform(dpr,0,0,dpr,0,0);
+ draw();
+}
+window.addEventListener("resize",resize);
+
+function demoData(){
+ candles=[];
+ let price=60000;
+ for(let i=0;i<300;i++){
+  const open=price;
+  const change=(Math.random()-.49)*500;
+  const close=open+change;
+  const high=Math.max(open,close)+Math.random()*180;
+  const low=Math.min(open,close)-Math.random()*180;
+  candles.push({open,high,low,close,time:Date.now()+i*900000});
+  price=close;
+ }
+ visible=50;
+ currentPrice=candles[visible-1].close;
+ document.getElementById("source").textContent="DEMO DATA";
+ message("Demo candles loaded. These are simulated prices, not historical market data.");
+ draw();
+ updateStats();
+}
+
+async function loadData(){
+ stopPlay();
+ const symbol=document.getElementById("symbol").value;
+ const interval=document.getElementById("interval").value;
+ const button=document.getElementById("load");
+ button.disabled=true;
+ message("Loading historical data...");
+ const urls=[
+  `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=500`,
+  `https://api1.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=500`
+ ];
+ try{
+  let result=null;
+  for(const url of urls){
+   try{
+    const response=await fetch(url);
+    if(!response.ok)throw new Error("HTTP "+response.status);
+    result=await response.json();
+    if(!Array.isArray(result))throw new Error("Invalid data");
+    break;
+   }catch(e){console.warn(e)}
+  }
+  if(!result)throw new Error("All Binance endpoints failed");
+  candles=result.map(c=>({
+   time:c[0],open:+c[1],high:+c[2],
+   low:+c[3],close:+c[4]
+  }));
+  visible=Math.min(50,candles.length);
+  currentPrice=candles[visible-1].close;
+  document.getElementById("source").textContent="BINANCE HISTORICAL DATA";
+  message("Historical candles loaded successfully.");
+  draw();updateStats();
+ }catch(error){
+  message("DATA LOAD ERROR: Check your internet connection or try Demo Data. "+error.message);
+  document.getElementById("source").textContent="LOAD FAILED";
+ }finally{button.disabled=false}
+}
+
+function draw(){
+ const w=canvas.clientWidth,h=canvas.clientHeight;
+ ctx.clearRect(0,0,w,h);
+ ctx.fillStyle="#111824";ctx.fillRect(0,0,w,h);
+ if(!candles.length||visible<2){
+  ctx.fillStyle="#8796aa";ctx.font="15px Arial";
+  ctx.fillText("Load data to display the chart",20,40);return;
+ }
+ const data=candles.slice(Math.max(0,visible-100),visible);
+ const max=Math.max(...data.map(c=>c.high));
+ const min=Math.min(...data.map(c=>c.low));
+ const range=max-min||1;
+ const y=p=>h-25-(p-min)/range*(h-50);
+ const step=w/data.length;
+ for(let i=0;i<=4;i++){
+  const yy=25+(h-50)*i/4;
+  ctx.strokeStyle="#263244";ctx.beginPath();
+  ctx.moveTo(0,yy);ctx.lineTo(w,yy);ctx.stroke();
+ }
+ data.forEach((c,i)=>{
+  const x=i*step+step/2;
+  const up=c.close>=c.open;
+  const color=up?"#20c997":"#ef5261";
+  ctx.strokeStyle=color;ctx.fillStyle=color;
+  ctx.beginPath();ctx.moveTo(x,y(c.high));ctx.lineTo(x,y(c.low));ctx.stroke();
+  const top=y(Math.max(c.open,c.close));
+  const bottom=y(Math.min(c.open,c.close));
+  ctx.fillRect(x-step*.3,top,Math.max(2,step*.6),Math.max(1,bottom-top));
+ });
+ ctx.fillStyle="#dce5f1";ctx.font="12px Arial";
+ ctx.fillText("Price: "+currentPrice.toFixed(2),10,16);
+}
+
+function updateStats(){
+ document.getElementById("balance").textContent="$"+balance.toFixed(2);
+ document.getElementById("count").textContent=trades;
+ document.getElementById("price").textContent=currentPrice?currentPrice.toFixed(2):"---";
+ let pnl=0;
+ if(position){
+  pnl=(currentPrice-position.entry)*(position.side==="LONG"?1:-1)
+   *position.quantity/position.entry;
+ }
+ document.getElementById("pnl").textContent="$"+pnl.toFixed(2);
+ document.getElementById("pnl").style.color=pnl>=0?"#20c997":"#ef5261";
+ document.getElementById("position").textContent=position?
+  `${position.side} | Entry: ${position.entry.toFixed(2)} | Size: $${position.quantity}`:
+  "No open position";
+}
+
+function nextCandle(){
+ if(visible>=candles.length){stopPlay();message("End of historical data.");return}
+ visible++;
+ currentPrice=candles[visible-1].close;
+ checkStops();
+ draw();updateStats();
+}
+function previousCandle(){
+ if(visible<=1)return;
+ visible--;
+ currentPrice=candles[visible-1].close;
+ draw();updateStats();
+}
+function stopPlay(){
+ playing=false;clearInterval(timer);
+ document.getElementById("play").textContent="PLAY";
+}
+function play(){
+ if(playing){stopPlay();return}
+ if(visible>=candles.length)return;
+ playing=true;
+ document.getElementById("play").textContent="PAUSE";
+ timer=setInterval(nextCandle,+document.getElementById("speed").value);
+}
+function openTrade(side){
+ if(!candles.length||visible<1){message("Load data first.");return}
+ if(position){message("Close your current trade first.");return}
+ const quantity=+document.getElementById("quantity").value;
+ if(quantity<=0){message("Enter a valid position size.");return}
+ position={
+  side,entry:currentPrice,quantity,
+  stop:+document.getElementById("stop").value||null,
+  target:+document.getElementById("target").value||null
+ };
+ updateStats();
+ message(side+" virtual position opened.");
+}
+function checkStops(){
+ if(!position)return;
+ const p=currentPrice;
+ const hitStop=position.stop&&
+  (position.side==="LONG"?p<=position.stop:p>=position.stop);
+ const hitTarget=position.target&&
+  (position.side==="LONG"?p>=position.target:p<=position.target);
+ if(hitStop||hitTarget)closeTrade(hitStop?"Stop Loss":"Take Profit");
+}
+function closeTrade(reason="Manual close"){
+ if(!position)return;
+ const pnl=(currentPrice-position.entry)*
+  (position.side==="LONG"?1:-1)*position.quantity/position.entry;
+ balance+=pnl;
+ trades++;
+ history.unshift(`${position.side} | ${reason} | PnL: $${pnl.toFixed(2)}`);
+ document.getElementById("history").innerHTML=history.map(x=>
+  `<div class="trade">${x}</div>`).join("");
+ position=null;
+ let choices=patterns.filter(p=>p!==lastPattern);
+ lastPattern=choices[Math.floor(Math.random()*choices.length)];
+ document.getElementById("pattern").textContent=lastPattern;
+ updateStats();
+ message("Trade closed. Virtual PnL: $"+pnl.toFixed(2));
+}
+
+document.getElementById("load").onclick=loadData;
+document.getElementById("demo").onclick=demoData;
+document.getElementById("next").onclick=nextCandle;
+document.getElementById("previous").onclick=previousCandle;
+document.getElementById("play").onclick=play;
+document.getElementById("reset").onclick=()=>{
+ stopPlay();visible=Math.min(50,candles.length);
+ if(visible)currentPrice=candles[visible-1].close;
+ draw();updateStats();
+};
+document.getElementById("speed").onchange=()=>{
+ if(playing){stopPlay();play()}
+};
+document.getElementById("long").onclick=()=>openTrade("LONG");
+document.getElementById("short").onclick=()=>openTrade("SHORT");
+document.getElementById("close").onclick=()=>closeTrade();
+
+resize();
+</script>
+</body>
+</html>
